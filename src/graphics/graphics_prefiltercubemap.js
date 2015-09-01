@@ -34,17 +34,18 @@ pc.extend(pc, (function () {
         }
 
         var chunks = pc.shaderChunks;
+        var rgbmSource = sourceCubemap.rgbm;
         var shader = chunks.createShaderFromCode(device, chunks.fullscreenQuadVS, chunks.rgbmPS +
             chunks.prefilterCubemapPS.
                 replace(/\$METHOD/g, method===0? "cos" : "phong").
-                replace(/\$NUMSAMPLES/g, samples),
-            "prefilter" + method + "" + samples);
+                replace(/\$NUMSAMPLES/g, samples).
+                replace(/\$textureCube/g, rgbmSource? "textureCubeRGBM" : "textureCube"),
+            "prefilter" + method + "" + samples + "" + rgbmSource);
         var shader2 = chunks.createShaderFromCode(device, chunks.fullscreenQuadVS, chunks.outputCubemapPS, "outputCubemap");
         var constantTexSource = device.scope.resolve("source");
         var constantParams = device.scope.resolve("params");
         var params = new pc.Vec4();
         var size = sourceCubemap.width;
-        var rgbmSource = sourceCubemap.rgbm;
         var format = sourceCubemap.format;
 
         var cmapsList = [[], options.filteredFixed, options.filteredRgbm, options.filteredFixedRgbm];
@@ -120,7 +121,7 @@ pc.extend(pc, (function () {
                     params.x = face;
                     params.y = sampleGloss;
                     params.z = size;
-                    params.w = 0;
+                    params.w = rgbmSource? 3 : 0;
                     constantTexSource.setValue(sourceCubemap);
                     constantParams.setValue(params.data);
 
@@ -213,7 +214,7 @@ pc.extend(pc, (function () {
                         params.x = face;
                         params.y = pass<0? unblurredGloss : gloss[i];
                         params.z = mipSize[i];
-                        params.w = pass;
+                        params.w = rgbmSource? 3 : pass;
                         constantTexSource.setValue(i===0? sourceCubemap :
                             method===0? cmapsList[0][i - 1] : cmapsList[-1][i - 1]);
                         constantParams.setValue(params.data);
@@ -323,7 +324,7 @@ pc.extend(pc, (function () {
         return solidAngle;
     }
 
-    function shFromCubemap(source) {
+    function shFromCubemap(source, dontFlipX) {
         var face;
         var cubeSize = source.width;
 
@@ -402,7 +403,7 @@ pc.extend(pc, (function () {
             }
         }
 
-        var sh = new Float32Array(25 * 3);
+        var sh = new Float32Array(9 * 3);
         var coef1 = 0;
         var coef2 = 1 * 3;
         var coef3 = 2 * 3;
@@ -463,7 +464,7 @@ pc.extend(pc, (function () {
                         dz = -dir.z;
                     }
 
-                    dx = -dx; // flip original cubemap x instead of doing it at runtime
+                    if (!dontFlipX) dx = -dx; // flip original cubemap x instead of doing it at runtime
 
                     a = source._levels[0][face][addr * 4 + 3] / 255.0;
 

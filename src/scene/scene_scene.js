@@ -72,9 +72,7 @@
         FOG_EXP2: 'exp2',
 
         FRESNEL_NONE: 0,
-        FRESNEL_SIMPLE: 1,
         FRESNEL_SCHLICK: 2,
-        FRESNEL_COMPLEX: 3,
 
         LAYER_HUD: 0,
         LAYER_GIZMO: 1,
@@ -153,6 +151,7 @@
         SHADERDEF_SKIN: 2,
         SHADERDEF_UV1: 4,
         SHADERDEF_VCOLOR: 8,
+        SHADERDEF_INSTANCING: 16,
 
         LINEBATCH_WORLD: 0,
         LINEBATCH_OVERLAY: 1,
@@ -379,7 +378,6 @@ pc.extend(pc, function () {
         var al = settings.render.global_ambient;
         this.ambientLight = new pc.Color(al[0], al[1], al[2]);
 
-
         this.fog = settings.render.fog;
 
         var fogColor = settings.render.fog_color;
@@ -393,8 +391,6 @@ pc.extend(pc, function () {
         this.exposure = settings.render.exposure;
         this.skyboxIntensity = settings.render.skyboxIntensity===undefined? 1 : settings.render.skyboxIntensity;
         this.skyboxMip = settings.render.skyboxMip===undefined? 0 : settings.render.skyboxMip;
-
-        this.skyboxAsset = settings.render.skybox;
     };
 
     // Shaders have to be updated if:
@@ -423,9 +419,8 @@ pc.extend(pc, function () {
             } else {
                 var mip2tex = [null, "64", "16", "8", "4"];
                 var mipTex = this["skyboxPrefiltered" + mip2tex[scene._skyboxMip]];
-                if (mipTex) {
+                if (mipTex)
                     material.setParameter("texture_cubeMap", mipTex);
-                }
             }
             material.cull = pc.CULLFACE_NONE;
 
@@ -458,9 +453,11 @@ pc.extend(pc, function () {
             }
         }
         for (i = 0; i < materials.length; i++) {
-            materials[i].clearVariants();
-            materials[i].updateShader(device, this);
-            materials[i].variants[0] = materials[i].shader;
+            var mat = materials[i];
+            if (mat.updateShader!==pc.Material.prototype.updateShader) {
+                mat.clearVariants();
+                mat.shader = null;
+            }
         }
     };
 
@@ -580,18 +577,6 @@ pc.extend(pc, function () {
         }
     };
 
-    Scene.prototype.attachSkyboxAsset = function (asset) {
-        var scene = this;
-
-        this.setSkybox(asset.resources);
-
-        asset.off('change', this._onSkyBoxChanged, this);
-        asset.on('change', this._onSkyBoxChanged, this);
-
-        asset.off('remove', this._onSkyBoxRemoved, this);
-        asset.on('remove', this._onSkyBoxRemoved, this);
-    };
-
     Scene.prototype._resetSkyboxModel = function () {
         if (this._skyboxModel) {
             if (this.containsModel(this._skyboxModel)) {
@@ -599,26 +584,6 @@ pc.extend(pc, function () {
             }
         }
         this._skyboxModel = null;
-    };
-
-    Scene.prototype._onSkyBoxChanged = function (asset, attribute, newValue, oldValue) {
-        if (attribute !== 'resources') {
-            return;
-        }
-
-        if (oldValue && oldValue[0] === this.skybox) {
-            this.setSkybox(newValue);
-        } else {
-            asset.off('change', this._onSkyBoxChanged, this);
-            asset.off('remove', this._onSkyBoxRemoved, this);
-        }
-    };
-
-    Scene.prototype._onSkyBoxRemoved = function (asset) {
-        asset.off('change', this._onSkyBoxChanged, this);
-        if (this.skybox === asset.resources[0]) {
-            this.setSkybox(null);
-        }
     };
 
     Scene.prototype.setSkybox = function (cubemaps) {

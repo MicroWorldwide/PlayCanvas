@@ -48,7 +48,7 @@ pc.extend(pc, function () {
             //////////////////
             // INDEX BUFFER //
             //////////////////
-            var indices = this._parseIndexBuffers(data);
+            var indices = this._parseIndexBuffers(data, vertexBuffers);
 
             ////////////
             // MESHES //
@@ -231,7 +231,7 @@ pc.extend(pc, function () {
             return vertexBuffers;
         },
 
-        _parseIndexBuffers: function (data) {
+        _parseIndexBuffers: function (data, vertexBuffers) {
             var modelData = data.model;
             var indexBuffer = null;
             var indexData = null;
@@ -247,9 +247,18 @@ pc.extend(pc, function () {
             }
 
             // Create an index buffer big enough to store all indices in the model
+            var maxVerts = 0;
+            for (i = 0; i < vertexBuffers.length; i++) {
+                maxVerts = Math.max(maxVerts, vertexBuffers[i].numVertices);
+            }
             if (numIndices > 0) {
-                indexBuffer = new pc.IndexBuffer(this._device, pc.INDEXFORMAT_UINT16, numIndices);
-                indexData = new Uint16Array(indexBuffer.lock());
+                if (maxVerts > 0xFFFF && this._device.extUintElement) {
+                    indexBuffer = new pc.IndexBuffer(this._device, pc.INDEXFORMAT_UINT32, numIndices);
+                    indexData = new Uint32Array(indexBuffer.lock());
+                } else {
+                    indexBuffer = new pc.IndexBuffer(this._device, pc.INDEXFORMAT_UINT16, numIndices);
+                    indexData = new Uint16Array(indexBuffer.lock());
+                }
             }
 
             return {

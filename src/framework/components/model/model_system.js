@@ -4,7 +4,7 @@ pc.extend(pc, function () {
      * @constructor Create a new ModelComponentSystem
      * @class Allows an Entity to render a model or a primitive shape like a box,
      * capsule, sphere, cylinder, cone etc.
-     * @param {Object} app
+     * @param {pc.Application} app The Application.
      * @extends pc.ComponentSystem
      */
     var ModelComponentSystem = function ModelComponentSystem (app) {
@@ -53,6 +53,8 @@ pc.extend(pc, function () {
         });
 
         this.defaultMaterial = new pc.PhongMaterial();
+
+        this.on('beforeremove', this.onRemove, this);
     };
     ModelComponentSystem = pc.inherits(ModelComponentSystem, pc.ComponentSystem);
 
@@ -89,9 +91,12 @@ pc.extend(pc, function () {
             clone.model.data.material = entity.model.material;
             clone.model.data.enabled = entity.model.enabled;
 
-            if (entity.model.model) {
+            if (entity.model.model)
                 clone.model.model = entity.model.model.clone();
-            }
+        },
+
+        onRemove: function(entity, data) {
+            data.remove();
         }
     });
 

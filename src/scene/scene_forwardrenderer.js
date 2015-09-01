@@ -878,7 +878,7 @@ pc.extend(pc, function () {
             var next;
             var autoInstances;
             var j;
-            var objDefs, prevObjDefs, lightMask, prevLightMask;
+            var objDefs, prevObjDefs, lightMask, prevLightMask, parameters;
 
             // Render the scene
             for (i = 0; i < drawCallsCount; i++) {
@@ -894,7 +894,7 @@ pc.extend(pc, function () {
                     objDefs = meshInstance._shaderDefs;
                     lightMask = meshInstance.mask;
 
-                    if (device.enableAutoInstancing && i!==drawCallsCount-1 && material.useInstancing) {
+                    if (device.enableAutoInstancing && i!==drawCallsCount-1 && device.extInstancing) {
                         next = i + 1;
                         autoInstances = 0;
                         if (drawCalls[next].mesh===mesh && drawCalls[next].material===material) {
@@ -918,11 +918,13 @@ pc.extend(pc, function () {
                     }
 
                     if (meshInstance.instancingData && device.extInstancing) {
+                        objDefs |= pc.SHADERDEF_INSTANCING;
                         if (!meshInstance.instancingData._buffer) {
                             meshInstance.instancingData._buffer = new pc.VertexBuffer(device, pc._instanceVertexFormat,
                                 drawCall.instancingData.count, drawCall.instancingData.usage, meshInstance.instancingData.buffer);
                         }
                     } else {
+                        objDefs &= ~pc.SHADERDEF_INSTANCING;
                         var modelMatrix = meshInstance.node.worldTransform;
                         var normalMatrix = meshInstance.normalMatrix;
 
@@ -949,17 +951,18 @@ pc.extend(pc, function () {
                     }
 
                     if (material !== prevMaterial) {
-
-                        if (!meshInstance._shader) {
+                        if (!meshInstance._shader || meshInstance._shaderDefs !== objDefs) {
                             meshInstance._shader = material.variants[objDefs];
                             if (!meshInstance._shader) {
                                 material.updateShader(device, scene, objDefs);
                                 meshInstance._shader = material.variants[objDefs] = material.shader;
                             }
+                            meshInstance._shaderDefs = objDefs;
                         }
                         device.setShader(meshInstance._shader);
 
-                        var parameters = material.parameters;
+                        // Uniforms I: material
+                        parameters = material.parameters;
                         for (var paramName in parameters) {
                             var parameter = parameters[paramName];
                             if (!parameter.scopeId) {
@@ -997,6 +1000,16 @@ pc.extend(pc, function () {
                         device.setCullMode(material.cull);
                         device.setDepthWrite(material.depthWrite);
                         device.setDepthTest(material.depthTest);
+                    }
+
+                    // Uniforms II: meshInstance overrides
+                    parameters = meshInstance.parameters;
+                    for (var paramName in parameters) {
+                        var parameter = parameters[paramName];
+                        if (!parameter.scopeId) {
+                            parameter.scopeId = device.scope.resolve(paramName);
+                        }
+                        parameter.scopeId.setValue(parameter.data);
                     }
 
                     device.setVertexBuffer(mesh.vertexBuffer, 0);

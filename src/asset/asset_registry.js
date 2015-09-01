@@ -12,6 +12,7 @@ pc.extend(pc, function () {
         this._assets = []; // list of all assets
         this._cache = {}; // index for looking up assets by id
         this._names = {}; // index for looking up assets by name
+        this._tags = new pc.TagsCache('_id'); // index for looking up by tags
         this._urls = {}; // index for looking up assets by url
 
         pc.extend(this, pc.events);
@@ -23,7 +24,8 @@ pc.extend(pc, function () {
         * @name pc.AssetRegistry#list
         * @description Create a filtered list of assets from the registry
         * @param {Object} filters Properties to filter on, currently supports: 'preload: true|false'
-        **/
+        * @returns {[pc.Asset]} The filtered list of assets.
+        */
         list: function (filters) {
             filters = filters || {};
             return this._assets.filter(function (asset) {
@@ -43,25 +45,33 @@ pc.extend(pc, function () {
         * @example
         * var asset = new pc.Asset("My Asset", "texture", {url: "../path/to/image.jpg"});
         * app.assets.add(asset);
-        **/
+        */
         add: function(asset) {
             var index = this._assets.push(asset) - 1;
             var url;
+
+            // id cache
             this._cache[asset.id] = index;
-            if (!this._names[asset.name]) {
-                this._names[asset.name] = [];
-            }
+            if (!this._names[asset.name])
+                this._names[asset.name] = [ ];
+
+            // name cache
             this._names[asset.name].push(index);
             if (asset.file) {
                 url = asset.getFileUrl();
                 this._urls[url] = index;
             }
+            asset.registry = this;
+
+            // tags cache
+            this._tags.addItem(asset);
+            asset.tags.on('add', this._onTagAdd, this);
+            asset.tags.on('remove', this._onTagRemove, this);
 
             this.fire("add", asset);
             this.fire("add:" + asset.id, asset);
-            if (url) {
+            if (url)
                 this.fire("add:url:" + url, asset);
-            }
         },
 
         /**
@@ -72,21 +82,24 @@ pc.extend(pc, function () {
         * @example
         * var asset = app.assets.get(100);
         * app.assets.remove(asset);
-        **/
+        */
         remove: function (asset) {
             delete this._cache[asset.id];
             delete this._names[asset.name];
             var url = asset.getFileUrl();
-            if (url) {
+            if (url)
                 delete this._urls[url];
-            }
+
+            // tags cache
+            this._tags.removeItem(asset);
+            asset.tags.off('add', this._onTagAdd, this);
+            asset.tags.off('remove', this._onTagRemove, this);
 
             asset.fire("remove", asset);
             this.fire("remove", asset);
             this.fire("remove:" + asset.id, asset);
-            if (url) {
+            if (url)
                 this.fire("remove:url:" + url, asset);
-            }
         },
 
         /**
@@ -94,9 +107,10 @@ pc.extend(pc, function () {
         * @name pc.AssetRegistry#get
         * @description Retrieve an asset from the registry by its id field
         * @param {int} id the id of the asset to get
+        * @returns {pc.Asset} The asset
         * @example
         * var asset = app.assets.get(100);
-        **/
+        */
         get: function (id) {
             var idx = this._cache[id];
             return this._assets[idx];
@@ -107,9 +121,10 @@ pc.extend(pc, function () {
         * @name pc.AssetRegistry#getByUrl
         * @description Retrieve an asset from the registry by it's file's URL field
         * @param {string} url The url of the asset to get
+        * @returns {pc.Asset} The asset
         * @example
         * var asset = app.assets.getByUrl("../path/to/image.jpg");
-        **/
+        */
         getByUrl: function (url) {
             var idx = this._urls[url];
             return this._assets[idx];
@@ -156,11 +171,13 @@ pc.extend(pc, function () {
         *     });
         *     app.assets.load(asset)
         * }
-        **/
+        */
         load: function (asset) {
-            if (asset instanceof Array) {
+            if (asset instanceof Array)
                 return this._compatibleLoad(asset);
-            }
+
+            if (asset.loading)
+                return;
 
             var self = this;
 
@@ -168,6 +185,8 @@ pc.extend(pc, function () {
             // note: lots of code calls assets.load() assuming this check is present
             // don't remove it without updating calls to assets.load() with checks for the asset.loaded state
             if (asset.loaded) {
+                if (asset.type === 'cubemap')
+                    self._loader.patch(asset, this);
                 return;
             }
 
@@ -177,13 +196,15 @@ pc.extend(pc, function () {
             var _load = function () {
                 var url = asset.file.url;
 
-                // add file hash as timestamp to avoid
-                // image caching
-                if (asset.type === 'texture') {
-                    url += '?t=' + asset.file.hash;
-                }
+                // add file hash to avoid caching
+                url += '?t=' + asset.file.hash;
+
+                asset.loading = true;
 
                 self._loader.load(url, asset.type, function (err, resource) {
+                    asset.loaded = true;
+                    asset.loading = false;
+
                     if (err) {
                         self.fire("error", err, asset);
                         self.fire("error:" + asset.id, err, asset);
@@ -195,12 +216,14 @@ pc.extend(pc, function () {
                     } else {
                         asset.resource = resource;
                     }
-                    asset.loaded = true;
 
                     self._loader.patch(asset, self);
 
                     self.fire("load", asset);
                     self.fire("load:" + asset.id, asset);
+                    if (asset.file && asset.file.url) {
+                        self.fire("load:url:" + asset.file.url, asset);
+                    }
                     asset.fire("load", asset);
                 });
             };
@@ -218,6 +241,9 @@ pc.extend(pc, function () {
 
                 self.fire("load", asset);
                 self.fire("load:" + asset.id, asset);
+                if (asset.file && asset.file.url) {
+                    self.fire("load:url:" + asset.file.url, asset);
+                }
                 asset.fire("load", asset);
             };
 
@@ -226,7 +252,7 @@ pc.extend(pc, function () {
                 load = false;
                 open = false;
                 // loading prefiltered cubemap data
-                this._loader.load(asset.file.url, "texture", function (err, texture) {
+                this._loader.load(asset.file.url + '?t=' + asset.file.hash, "texture", function (err, texture) {
                     if (!err) {
                         // Fudging an asset so that we can apply texture settings from the cubemap to the DDS texture
                         self._loader.patch({
@@ -236,7 +262,7 @@ pc.extend(pc, function () {
                         }, self);
 
                         // store in asset data
-                        asset.data.dds = texture;
+                        asset._dds = texture;
                         _open();
                     } else {
                         self.fire("error", err, asset);
@@ -280,8 +306,8 @@ pc.extend(pc, function () {
             var asset = self.getByUrl(url);
             if (!asset) {
                 asset = new pc.Asset(name, type, file, data);
+                self.add(asset);
             }
-            self.add(asset);
 
             if (type === 'model') {
                 self._loadModel(asset, callback);
@@ -358,19 +384,33 @@ pc.extend(pc, function () {
         _loadTextures: function (materials, callback) {
             var self = this;
             var i, j;
+            var used = {}; // prevent duplicate urls
             var urls = [];
             var textures = [];
             var count = 0;
             for (i = 0; i < materials.length; i++) {
-                var params = materials[i].data.parameters
-                for (j = 0; j < params.length; j++) {
-                    if (params[j].type === "texture") {
-                        var dir = pc.path.getDirectory(materials[i].getFileUrl());
-                        var url = pc.path.join(dir, params[j].data);
-                        urls.push(url);
-                        count++;
+                if (materials[i].data.parameters) {
+                    // old material format
+                    var params = materials[i].data.parameters;
+                    for (var j = 0; j < params.length; j++) {
+                        if (params[j].type === "texture") {
+                            var dir = pc.path.getDirectory(materials[i].getFileUrl());
+                            var url = pc.path.join(dir, params[j].data);
+                            if (!used[url]) {
+                                used[url] = true;
+                                urls.push(url);
+                                count++;
+                            }
+                        }
                     }
+                } else {
+                    console.warn("Update material asset loader to support new material format");
                 }
+            }
+
+            if (!count) {
+                callback(null, textures);
+                return;
             }
 
             for (i = 0; i < urls.length; i++) {
@@ -415,6 +455,40 @@ pc.extend(pc, function () {
             } else {
                 return [];
             }
+        },
+
+        _onTagAdd: function(tag, asset) {
+            this._tags.add(tag, asset);
+        },
+
+        _onTagRemove: function(tag, asset) {
+            this._tags.remove(tag, asset);
+        },
+
+        /**
+        * @function
+        * @name pc.AssetRegistry#findByTag
+        * @description Return all Assets that satisfy the search query.
+        * Query can be simply a string, or comma separated strings,
+        * to have inclusive results of assets that match at least one query.
+        * A query that consists of an array of tags can be used to match assets that have each tag of array
+        * @param {String} tag Name of a tag or array of tags
+        * @returns {[pc.Asset]} A list of all Assets matched query
+        * @example
+        * var assets = app.assets.findByTag("level-1");
+        * // returns all assets that tagged by `level-1`
+        * @example
+        * var assets = app.assets.findByTag("level-1", "level-2");
+        * // returns all assets that tagged by `level-1` OR `level-2`
+        * @example
+        * var assets = app.assets.findByTag([ "level-1", "monster" ]);
+        * // returns all assets that tagged by `level-1` AND `monster`
+        * @example
+        * var assets = app.assets.findByTag([ "level-1", "monster" ], [ "level-2", "monster" ]);
+        * // returns all assets that tagged by (`level-1` AND `monster`) OR (`level-2` AND `monster`)
+        */
+        findByTag: function() {
+            return this._tags.find(arguments);
         },
 
         /**

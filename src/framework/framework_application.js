@@ -11,13 +11,24 @@ pc.extend(pc, function () {
      * @param {pc.TouchDevice} [options.touch] TouchDevice handler for input
      * @param {pc.GamePads} [options.gamepads] Gamepad handler for input
      * @param {String} [options.scriptPrefix] Prefix to apply to script urls before loading
+     * @property {pc.Scene} scene The current {@link pc.Scene}
+     * @property {Number} timeScale Scales the global time delta.
+     * @property {pc.AssetRegistry} assets The assets available to the application.
+     * @property {pc.GraphicsDevice} graphicsDevice The graphics device used by the application.
+     * @property {[pc.ComponentSystem]} systems The component systems.
+     * @property {pc.ResourceLoader} loader The resource loader.
+     * @property {pc.Entity} root The root {@link pc.Entity} of the application.
+     * @property {pc.ForwardRenderer} renderer The graphics renderer.
+     * @property {pc.Keyboard} keyboard The keyboard device.
+     * @property {pc.Mouse} mouse The mouse device.
+     * @property {pc.TouchDevice} touch Used to get touch events input.
+     * @property {pc.GamePads} gamepads Used to access GamePad input.
      *
      * @example
      * // Create application
      * var app = new pc.Application(canvas, options);
      * // Start game loop
      * app.start()
-     * @property {Number} timeScale Scales the global time delta.
      */
     var Application = function (canvas, options) {
         options = options || {};
@@ -58,6 +69,8 @@ pc.extend(pc, function () {
 
         this._inTools = false;
 
+        this._skyboxLast = 0;
+
         this._scriptPrefix = options.scriptPrefix || '';
         // this._scripts = [];
 
@@ -71,6 +84,8 @@ pc.extend(pc, function () {
         this.loader.addHandler("script", new pc.ScriptHandler(this));
         this.loader.addHandler("scene", new pc.SceneHandler(this));
         this.loader.addHandler("cubemap", new pc.CubemapHandler(this.graphicsDevice, this.assets, this.loader));
+        this.loader.addHandler("html", new pc.HtmlHandler());
+        this.loader.addHandler("css", new pc.CssHandler());
         this.loader.addHandler("hierarchy", new pc.HierarchyHandler(this));
         this.loader.addHandler("scenesettings", new pc.SceneSettingsHandler(this));
 
@@ -161,6 +176,8 @@ pc.extend(pc, function () {
         preload: function (callback) {
             var self = this;
 
+            self.fire("preload:start");
+
             // get list of assets to preload
             var assets = this.assets.list({
                 preload: true
@@ -179,6 +196,7 @@ pc.extend(pc, function () {
 
                 if (!_done && _assets.done()) {
                     _done = true;
+                    self.fire("preload:end");
                     callback();
                 }
             };
@@ -297,7 +315,7 @@ pc.extend(pc, function () {
         loadSceneSettings: function (url, callback) {
             this.loader.load(url, "scenesettings", function (err, settings) {
                 if (!err) {
-                    this.updateSceneSettings(settings);
+                    this.applySceneSettings(settings);
                     if (callback) {
                         callback(null);
                     }
@@ -390,9 +408,8 @@ pc.extend(pc, function () {
                     }
 
                     this.loader.load(scriptUrl, "script", function (err, ScriptType) {
-                        if (err) {
+                        if (err)
                             console.error(err);
-                        }
 
                         progress.inc();
                         if (progress.done()) {
@@ -411,8 +428,12 @@ pc.extend(pc, function () {
         _parseApplicationProperties: function (props, callback) {
             this._width = props['width'];
             this._height = props['height'];
+            if (props['use_device_pixel_ratio']) {
+                this.graphicsDevice.maxPixelRatio = window.devicePixelRatio;
+            }
+
             this.setCanvasResolution(props['resolution_mode'], this._width, this._height);
-            this.setCanvasFillMode(props['fill_mode'], this._width, this._height)
+            this.setCanvasFillMode(props['fill_mode'], this._width, this._height);
 
             this._loadLibraries(props['libraries'], callback);
         },
@@ -446,6 +467,9 @@ pc.extend(pc, function () {
                 var asset = new pc.Asset(data['name'], data['type'], data['file'], data['data']);
                 asset.id = parseInt(id);
                 asset.preload = data.preload ? data.preload : false;
+                // tags
+                asset.tags.add(data['tags']);
+                // registry
                 this.assets.add(asset);
             }
         },
@@ -492,6 +516,8 @@ pc.extend(pc, function () {
          * @description Start the Application updating
          */
         start: function () {
+            this.fire("start");
+
             if (!this.scene) {
                 this.scene = new pc.Scene();
                 this.scene.root = new pc.Entity();
@@ -796,53 +822,65 @@ pc.extend(pc, function () {
             this.systems.collision.onLibraryLoaded();
         },
 
-        updateSceneSettings: function (settings) {
-            var self = this;
-
-            if (self.systems.rigidbody && typeof Ammo !== 'undefined') {
+        applySceneSettings: function (settings) {
+            if (this.systems.rigidbody && typeof Ammo !== 'undefined') {
                 var gravity = settings.physics.gravity;
-                self.systems.rigidbody.setGravity(gravity[0], gravity[1], gravity[2]);
+                this.systems.rigidbody.setGravity(gravity[0], gravity[1], gravity[2]);
             }
 
-            if (!self.scene) {
+            if (! this.scene)
                 return;
-            }
 
-            var ambient = settings.render.global_ambient;
-            self.scene.ambientLight.set(ambient[0], ambient[1], ambient[2]);
+            this.scene.applySettings(settings);
 
-            self.scene.fog = settings.render.fog;
-            self.scene.fogStart = settings.render.fog_start;
-            self.scene.fogEnd = settings.render.fog_end;
-
-            var fog = settings.render.fog_color;
-            self.scene.fogColor = new pc.Color(fog[0], fog[1], fog[2]);
-            self.scene.fogDensity = settings.render.fog_density;
-
-            self.scene.gammaCorrection = settings.render.gamma_correction;
-            self.scene.toneMapping = settings.render.tonemapping;
-            self.scene.exposure = settings.render.exposure;
-            self.scene.skyboxIntensity = settings.render.skyboxIntensity===undefined? 1 : settings.render.skyboxIntensity;
-            self.scene.skyboxMip = settings.render.skyboxMip===undefined? 0 : settings.render.skyboxMip;
-
-            if (settings.render.skybox) {
-                var asset = self.assets.get(settings.render.skybox);
-                if (asset) {
-                    asset.ready(function (asset) {
-                        self.scene.attachSkyboxAsset(asset);
-                    });
-                    self.assets.load(asset);
-                } else {
-                    self.assets.once("add:" + settings.render.skybox, function (asset) {
-                        asset.ready(function (asset) {
-                            self.scene.attachSkyboxAsset(asset);
-                        });
-                        self.assets.load(asset);
-                    });
+            if (settings.render.skybox && this._skyboxLast !== settings.render.skybox) {
+                // unsubscribe of old skybox
+                if (this._skyboxLast) {
+                    this.assets.off('add:' + this._skyboxLast, this._onSkyboxAdd, this);
+                    this.assets.off('load:' + this._skyboxLast, this._onSkyBoxLoad, this);
+                    this.assets.off('remove:' + this._skyboxLast, this._onSkyboxRemove, this);
                 }
-            } else {
-                self.scene.setSkybox(null);
+                this._skyboxLast = settings.render.skybox;
+
+                var asset = this.assets.get(settings.render.skybox);
+
+                this.assets.on('load:' + settings.render.skybox, this._onSkyBoxLoad, this);
+                this.assets.once('remove:' + settings.render.skybox, this._onSkyboxRemove, this);
+
+                if (! asset)
+                    this.assets.once('add:' + settings.render.skybox, this._onSkyboxAdd, this);
+
+                if (asset) {
+                    if (asset.resource)
+                        this.scene.setSkybox(asset.resources);
+
+                    this._onSkyboxAdd(asset);
+                }
+            } else if (! settings.render.skybox) {
+                this._onSkyboxRemove({ id: this._skyboxLast });
+            } else if (this.scene.skyboxMip === 0 && settings.render.skybox) {
+                var asset = this.assets.get(settings.render.skybox);
+                if (asset)
+                    this._onSkyboxAdd(asset);
             }
+        },
+
+        _onSkyboxAdd: function(asset) {
+            if (this.scene.skyboxMip === 0)
+                asset.loadFaces = true;
+
+            this.assets.load(asset);
+        },
+
+        _onSkyBoxLoad: function(asset) {
+            this.scene.setSkybox(asset.resources);
+        },
+
+        _onSkyboxRemove: function(asset) {
+            this.assets.off('add:' + asset.id, this._onSkyboxAdd, this);
+            this.assets.off('load:' + asset.id, this._onSkyBoxLoad, this);
+            this.scene.setSkybox(null);
+            this._skyboxLast = null;
         },
 
         /**
@@ -949,7 +987,3 @@ pc.extend(pc, function () {
         Application: Application
     };
 } ());
-
-
-
-

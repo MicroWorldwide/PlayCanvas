@@ -15,7 +15,7 @@ pc.extend(pc, function () {
     * <li>fixedUpdate</li>
     * <li>postUpdate</li>
     * </ul>
-    * @property {Object[]} scripts An array of all the scripts to load. Each script object has this format:
+    * @property {Array} scripts An array of all the scripts to load. Each script object has this format:
     * {url: 'url.js', name: 'url', 'attributes': [attribute1, attribute2, ...]}
     */
 
@@ -196,7 +196,7 @@ pc.extend(pc, function () {
                 var _url = null;
                 var _unprefixed = null;
                 // support absolute URLs (for now)
-                if (pc.string.startsWith(url.toLowerCase(), "http://") || pc.string.startsWith(url.toLowerCase(), "https://")) {
+                if (url.toLowerCase().startsWith("http://") || url.toLowerCase().startsWith("https://")) {
                     _unprefixed = url;
                     _url = url;
                 } else {

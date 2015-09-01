@@ -48,7 +48,7 @@ def get_revision():
 
         revision = out[0]
         if revision:
-            return revision
+            return revision.decode('utf-8')
         else:
             print("WARNING: Something went wrong trying to extract revision")
             return "-"
@@ -62,7 +62,7 @@ def get_version():
         f = open(version_file, "r")
         version = f.read()
         f.close()
-    except Exception, e:
+    except Exception as e:
         print(str(e))
         return "__CURRENT_SDK_VERSION__"
     return version
@@ -92,7 +92,11 @@ def build(dst):
     for file in dependencies:
         cmd.append("--js=" + os.path.join(ROOT, file.strip()))
 
-    retcode = subprocess.call(cmd)
+    try:
+        retcode = subprocess.call(cmd)
+    except OSError:
+        print("ERROR: java binary not found, exiting")
+        return 127  # Error code for a non-existing executable
 
     # Copy OUTPUT to build directory
     if not os.path.exists(os.path.dirname(dst)):
@@ -125,7 +129,7 @@ def setup():
     global ROOT, OUTPUT, COMPILATION_LEVEL
     try:
         opts, args = getopt.getopt(sys.argv[1:], "d:o:hl:")
-    except getopt.GetoptError, err:
+    except getopt.GetoptError as err:
         print(str(err))
         sys.exit(2)
 

@@ -11,7 +11,9 @@ pc.extend(pc, function () {
     * @property {Number} speed Speed multiplier for animation play back speed. 1.0 is playback at normal speed, 0.0 pauses the animation
     * @property {Boolean} loop If true the animation will restart from the beginning when it reaches the end
     * @property {Boolean} activate If true the first animation asset will begin playing when the Pack is loaded
-    * @property {Number[]} assets The array of animation assets
+    * @property {[pc.Asset]} assets The array of animation assets - can also be an array of asset ids.
+    * @property {Number} currentTime Get or Set the current time position (in seconds) of the animation
+    * @property {Number} duration Get the duration in seconds of the current animation.
     */
     var AnimationComponent = function (system, entity) {
         // Handle changes to the 'animations' value
@@ -308,11 +310,7 @@ pc.extend(pc, function () {
     });
 
     Object.defineProperties(AnimationComponent.prototype, {
-        /**
-        * @property
-        * @name pc.AnimationComponent#currentTime
-        * @description Get or Set the current time position (in seconds) of the animation
-        */
+
         currentTime: {
             get: function () {
                 return this.data.skeleton.getCurrentTime();
@@ -324,11 +322,6 @@ pc.extend(pc, function () {
             }
         },
 
-        /**
-        * @property
-        * @name pc.AnimationComponent#duration
-        * @description Get the duration in seconds of the current animation.
-        */
         duration: {
             get: function () {
                 return this.data.animations[this.data.currAnim].getDuration();

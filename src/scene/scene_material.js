@@ -204,7 +204,7 @@ pc.extend(pc, function () {
      * @function
      * @name pc.Material#getParameter
      * @description Retrieves the specified shader parameter from a material.
-     * @name {string} name The name of the parameter to query.
+     * @param {string} name The name of the parameter to query.
      * @returns {Object} The named parameter.
      * @author Will Eastcott
      */
@@ -216,11 +216,26 @@ pc.extend(pc, function () {
      * @function
      * @name pc.Material#setParameter
      * @description Sets a shader parameter on a material.
-     * @name {string} name The name of the parameter to set.
-     * @name {number|Array|pc.Texture} data The value for the specified parameter.
+     * @param {string} name The name of the parameter to set.
+     * @param {number|Array|pc.Texture} data The value for the specified parameter.
      * @author Will Eastcott
      */
-    Material.prototype.setParameter = function (name, data) {
+    Material.prototype.setParameter = function (arg, data) {
+
+        var name;
+        if (data===undefined) {
+            var uniformObject = arg;
+            if (uniformObject.length) {
+                for(var i=0; i<uniformObject.length; i++) this.setParameter(uniformObject[i]);
+                    return;
+            } else {
+                name = uniformObject.name;
+                data = uniformObject.value;
+            }
+        } else {
+            name = arg;
+        }
+
         var param = this.parameters[name];
         if (param) {
             param.data = data;
@@ -236,7 +251,7 @@ pc.extend(pc, function () {
      * @function
      * @name pc.Material#deleteParameter
      * @description Deletes a shader parameter on a material.
-     * @name {string} name The name of the parameter to delete.
+     * @param {string} name The name of the parameter to delete.
      * @author Will Eastcott
      */
     Material.prototype.deleteParameter = function (name) {
@@ -284,10 +299,21 @@ pc.extend(pc, function () {
         this.shader = shader;
     };
 
+    /**
+     * @function
+     * @name pc.Material#update
+     * @description Applies any changes made to the material's properties.
+     */
     Material.prototype.update = function () {
         throw Error("Not Implemented in base class");
     };
 
+    /**
+     * @function
+     * @description Initializes the material with the properties in the specified data.
+     * @name pc.Material#init
+     * @param {object} data The initial data for the material.
+     */
     Material.prototype.init = function (data) {
         throw Error("Not Implemented in base class");
     };

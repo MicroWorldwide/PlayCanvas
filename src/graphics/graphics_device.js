@@ -104,7 +104,7 @@ pc.extend(pc, function () {
         this.enableAutoInstancing = false;
         this.autoInstancingMaxObjects = 16384;
         this.attributesInvalidated = true;
-        this.boundBuffer = [];
+        this.boundBuffer = null;
         this.instancedAttribs = {};
         this.enabledAttributes = {};
         this.textureUnits = [];
@@ -145,6 +145,7 @@ pc.extend(pc, function () {
 
             this.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
             this.maxCubeMapSize = gl.getParameter(gl.MAX_CUBE_MAP_TEXTURE_SIZE);
+            this.maxRenderBufferSize = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE);
 
             // Query the precision supported by ints and floats in vertex and fragment shaders
             var vertexShaderPrecisionHighpFloat = gl.getShaderPrecisionFormat(gl.VERTEX_SHADER, gl.HIGH_FLOAT);
@@ -255,6 +256,8 @@ pc.extend(pc, function () {
             this.extTextureFloatLinear = gl.getExtension("OES_texture_float_linear");
             this.extTextureHalfFloat = gl.getExtension("OES_texture_half_float");
 
+            this.extUintElement = gl.getExtension("OES_element_index_uint");
+
             this.maxVertexTextures = gl.getParameter(gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS);
             this.supportsBoneTextures = this.extTextureFloat && this.maxVertexTextures > 0;
 
@@ -333,7 +336,6 @@ pc.extend(pc, function () {
             }
 
             this.extInstancing = gl.getExtension("ANGLE_instanced_arrays");
-            if (this.enableAutoInstancing && !this.extInstancing) this.enableAutoInstancing = false;
 
             this.extCompressedTextureETC1 = gl.getExtension('WEBGL_compressed_texture_etc1');
             this.extDrawBuffers = gl.getExtension('EXT_draw_buffers');
@@ -407,9 +409,10 @@ pc.extend(pc, function () {
 
             pc.events.attach(this);
 
-            this.boundBuffer = [];
+            this.boundBuffer = null;
             this.instancedAttribs = {};
 
+            this.activeTexture = 0;
             this.textureUnits = [];
 
             this.attributesInvalidated = true;
@@ -491,7 +494,7 @@ pc.extend(pc, function () {
         updateBegin: function () {
             var gl = this.gl;
 
-            this.boundBuffer = [];
+            this.boundBuffer = null;
             this.indexBuffer = null;
 
             // Set the render target
@@ -500,17 +503,21 @@ pc.extend(pc, function () {
                 // Create a new WebGL frame buffer object
                 if (!target._glFrameBuffer) {
                     target._glFrameBuffer = gl.createFramebuffer();
-
                     gl.bindFramebuffer(gl.FRAMEBUFFER, target._glFrameBuffer);
 
-                    if (!target._colorBuffer._glTextureId) {
-                        this.setTexture(target._colorBuffer, 0);
+                    var colorBuffer = target._colorBuffer;
+                    if (!colorBuffer._glTextureId) {
+                        // Clamp the render buffer size to the maximum supported by the device
+                        colorBuffer._width = Math.min(colorBuffer.width, this.maxRenderBufferSize);
+                        colorBuffer._height = Math.min(colorBuffer.height, this.maxRenderBufferSize);
+
+                        this.setTexture(colorBuffer, 0);
                     }
 
                     gl.framebufferTexture2D(gl.FRAMEBUFFER,
                                             gl.COLOR_ATTACHMENT0,
-                                            target._colorBuffer._cubemap ? gl.TEXTURE_CUBE_MAP_POSITIVE_X + target._face : gl.TEXTURE_2D,
-                                            target._colorBuffer._glTextureId,
+                                            colorBuffer._cubemap ? gl.TEXTURE_CUBE_MAP_POSITIVE_X + target._face : gl.TEXTURE_2D,
+                                            colorBuffer._glTextureId,
                                             0);
 
                     if (target._depth) {
@@ -676,7 +683,7 @@ pc.extend(pc, function () {
             while(texture._levels[mipLevel] || mipLevel==0) { // Upload all existing mip levels. Initialize 0 mip anyway.
                 mipObject = texture._levels[mipLevel];
 
-                if (mipLevel==1 && !texture._compressed) {
+                if (mipLevel == 1 && ! texture._compressed) {
                     // We have more than one mip levels we want to assign, but we need all mips to make
                     // the texture complete. Therefore first generate all mip chain from 0, then assign custom mips.
                     gl.generateMipmap(texture._glTarget);
@@ -690,6 +697,9 @@ pc.extend(pc, function () {
                     if ((mipObject[0] instanceof HTMLCanvasElement) || (mipObject[0] instanceof HTMLImageElement) || (mipObject[0] instanceof HTMLVideoElement)) {
                         // Upload the image, canvas or video
                         for (face = 0; face < 6; face++) {
+                            if (! texture._levelsUpdated[0][face])
+                                continue;
+
                             var src = mipObject[face];
                             // Downsize images that are too large to be used as cube maps
                             if (src instanceof HTMLImageElement) {
@@ -713,6 +723,8 @@ pc.extend(pc, function () {
                         // Upload the byte array
                         var resMult = 1 / Math.pow(2, mipLevel);
                         for (face = 0; face < 6; face++) {
+                            if (! texture._levelsUpdated[0][face])
+                                continue;
 
                             if (texture._compressed) {
                                 gl.compressedTexImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X + face,
@@ -785,6 +797,12 @@ pc.extend(pc, function () {
                 mipLevel++;
             }
 
+            if (texture._cubemap) {
+                for(var i = 0; i < 6; i++)
+                    texture._levelsUpdated[0][i] = false;
+            } else {
+                texture._levelsUpdated[0] = false;
+            }
 
             if (texture.autoMipmap && pc.math.powerOfTwo(texture._width) && pc.math.powerOfTwo(texture._height) && texture._levels.length === 1 && !texture._compressed) {
                 gl.generateMipmap(texture._glTarget);
@@ -798,24 +816,42 @@ pc.extend(pc, function () {
                 this.initializeTexture(texture);
             }
 
-            gl.activeTexture(gl.TEXTURE0 + textureUnit);
+            if (this.activeTexture !== textureUnit) {
+                gl.activeTexture(gl.TEXTURE0 + textureUnit);
+                this.activeTexture = textureUnit;
+            }
+
+            var target = texture._glTarget;
             if (this.textureUnits[textureUnit] !== texture) {
-                gl.bindTexture(texture._glTarget, texture._glTextureId);
+                gl.bindTexture(target, texture._glTextureId);
                 this.textureUnits[textureUnit] = texture;
             }
 
-            gl.texParameteri(texture._glTarget, gl.TEXTURE_MIN_FILTER, this.glFilter[texture._minFilter]);
-            gl.texParameteri(texture._glTarget, gl.TEXTURE_MAG_FILTER, this.glFilter[texture._magFilter]);
-
-            gl.texParameteri(texture._glTarget, gl.TEXTURE_WRAP_S, this.glAddress[texture._addressU]);
-            gl.texParameteri(texture._glTarget, gl.TEXTURE_WRAP_T, this.glAddress[texture._addressV]);
-
-            var ext = this.extTextureFilterAnisotropic;
-            if (ext) {
-                var maxAnisotropy = this.maxAnisotropy;
-                var anisotropy = texture.anisotropy;
-                anisotropy = Math.min(anisotropy, maxAnisotropy);
-                gl.texParameterf(texture._glTarget, ext.TEXTURE_MAX_ANISOTROPY_EXT, anisotropy);
+            if (texture._minFilterDirty) {
+                gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, this.glFilter[texture._minFilter]);
+                texture._minFilterDirty = false;
+            }
+            if (texture._magFilterDirty) {
+                gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, this.glFilter[texture._magFilter]);
+                texture._magFilterDirty = false;
+            }
+            if (texture._addressUDirty) {
+                gl.texParameteri(target, gl.TEXTURE_WRAP_S, this.glAddress[texture._addressU]);
+                texture._addressUDirty = false;
+            }
+            if (texture._addressVDirty) {
+                gl.texParameteri(target, gl.TEXTURE_WRAP_T, this.glAddress[texture._addressV]);
+                texture._addressVDirty = false;
+            }
+            if (texture._anisotropyDirty) {
+                var ext = this.extTextureFilterAnisotropic;
+                if (ext) {
+                    var maxAnisotropy = this.maxAnisotropy;
+                    var anisotropy = texture.anisotropy;
+                    anisotropy = Math.min(anisotropy, maxAnisotropy);
+                    gl.texParameterf(target, ext.TEXTURE_MAX_ANISOTROPY_EXT, anisotropy);
+                }
+                texture._anisotropyDirty = false;
             }
 
             if (texture._needsUpload) {
@@ -851,7 +887,7 @@ pc.extend(pc, function () {
             var uniforms = shader.uniforms;
 
             if (numInstances > 1) {
-                this.boundBuffer = [];
+                this.boundBuffer = null;
                 this.attributesInvalidated = true;
             }
 
@@ -872,9 +908,9 @@ pc.extend(pc, function () {
                         vertexBuffer = this.vertexBuffers[element.stream];
 
                         // Set the active vertex buffer object
-                        if (this.boundBuffer[element.stream] !== vertexBuffer.bufferId) {
+                        if (this.boundBuffer !== vertexBuffer.bufferId) {
                             gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer.bufferId);
-                            this.boundBuffer[element.stream] = vertexBuffer.bufferId;
+                            this.boundBuffer = vertexBuffer.bufferId;
                         }
 
                         // Hook the vertex buffer to the shader program
@@ -892,7 +928,7 @@ pc.extend(pc, function () {
                         if (element.stream===1 && numInstances>1) {
                             if (!this.instancedAttribs[attribute.locationId]) {
                                 this.extInstancing.vertexAttribDivisorANGLE(attribute.locationId, 1);
-                                this.instancedAttribs = attribute.locationId;
+                                this.instancedAttribs[attribute.locationId] = true;
                             }
                         } else if (this.instancedAttribs[attribute.locationId]) {
                             this.extInstancing.vertexAttribDivisorANGLE(attribute.locationId, 0);
@@ -959,13 +995,13 @@ pc.extend(pc, function () {
                                                                   this.indexBuffer.glFormat,
                                                                   primitive.base * 2,
                                                                   numInstances);
-                    this.boundBuffer = [];
+                    this.boundBuffer = null;
                     this.attributesInvalidated = true;
                 } else {
                     gl.drawElements(this.glPrimitive[primitive.type],
                                     primitive.count,
                                     this.indexBuffer.glFormat,
-                                    primitive.base * 2);
+                                    primitive.base * this.indexBuffer.bytesPerIndex);
                 }
             } else {
                 if (numInstances > 1) {
@@ -973,7 +1009,7 @@ pc.extend(pc, function () {
                                   primitive.base,
                                   primitive.count,
                                   numInstances);
-                    this.boundBuffer = [];
+                    this.boundBuffer = null;
                     this.attributesInvalidated = true;
                 } else {
                     gl.drawArrays(this.glPrimitive[primitive.type],
@@ -1274,6 +1310,10 @@ pc.extend(pc, function () {
             }
         },
 
+        getCullMode: function () {
+            return this.cullMode;
+        },
+
         /**
          * @function
          * @name pc.GraphicsDevice#setIndexBuffer
@@ -1332,9 +1372,11 @@ pc.extend(pc, function () {
             if (shader !== this.shader) {
                 this.shader = shader;
 
+                if (! shader.ready)
+                    shader.link();
+
                 // Set the active shader
-                var gl = this.gl;
-                gl.useProgram(shader.program);
+                this.gl.useProgram(shader.program);
 
                 this.attributesInvalidated = true;
             }
